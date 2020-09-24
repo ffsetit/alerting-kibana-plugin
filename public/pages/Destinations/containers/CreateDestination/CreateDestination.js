@@ -34,46 +34,55 @@ import { DESTINATION_OPTIONS, DESTINATION_TYPE } from '../../utils/constants';
 import { validateDestinationName } from './utils/validations';
 import { formikToDestination } from './utils/formikToDestination';
 import { destinationToFormik } from './utils/destinationToFormik';
-import { Webhook, CustomWebhook } from '../../components/createDestinations';
+import { Webhook, CustomWebhook, Email } from '../../components/createDestinations';
 
 const destinationType = {
-  [DESTINATION_TYPE.SLACK]: props => <Webhook {...props} />,
-  [DESTINATION_TYPE.CHIME]: props => <Webhook {...props} />,
-  [DESTINATION_TYPE.CUSTOM_HOOK]: props => <CustomWebhook {...props} />,
+  [DESTINATION_TYPE.SLACK]: (props) => <Webhook {...props} />,
+  [DESTINATION_TYPE.CHIME]: (props) => <Webhook {...props} />,
+  [DESTINATION_TYPE.CUSTOM_HOOK]: (props) => <CustomWebhook {...props} />,
+  [DESTINATION_TYPE.EMAIL]: (props) => <Email {...props} />,
 };
 
 class CreateDestination extends React.Component {
   constructor(props) {
     super(props);
-    let initialValues = formikInitialValues;
+    this.state = {
+      initialValues: formikInitialValues,
+    };
+  }
 
-    const { location, edit, history } = this.props;
-    let destinationVersion;
+  async componentDidMount() {
+    const { httpClient, location, edit, history } = this.props;
+    let ifSeqNo, ifPrimaryTerm;
     if (edit) {
       // In case user is refreshing in edit mode , redirect them to the destination page.
       // TODO:: Ideally this should fetch the destination from ElasticSearch and fill in value
       const destinationToEdit = _.get(location, 'state.destinationToEdit', null);
       if (destinationToEdit) {
-        initialValues = { ...destinationToFormik(destinationToEdit) };
-        destinationVersion = destinationToEdit.version;
+        const initialValues = { ...(await destinationToFormik(httpClient, destinationToEdit)) };
+        ifSeqNo = destinationToEdit.ifSeqNo;
+        ifPrimaryTerm = destinationToEdit.ifPrimaryTerm;
+        this.setState({
+          initialValues,
+          ifSeqNo,
+          ifPrimaryTerm,
+        });
       } else {
         history.push('/destinations');
       }
     }
-    this.state = {
-      initialValues,
-      destinationVersion,
-    };
   }
 
-  getDestination = async destinationId => {
+  getDestination = async (destinationId) => {
     const { httpClient, history } = this.props;
     try {
       const resp = await httpClient.get(`../api/alerting/destinations/${destinationId}`);
       if (resp.data.ok) {
-        const destinationVersion = _.get(resp, 'data.version');
+        const ifSeqNo = _.get(resp, 'data.ifSeqNo');
+        const ifPrimaryTerm = _.get(resp, 'data.ifPrimaryTerm');
         this.setState({
-          destinationVersion,
+          ifSeqNo,
+          ifPrimaryTerm,
         });
       } else {
         // Handle error, show message in case of 404
@@ -92,14 +101,14 @@ class CreateDestination extends React.Component {
       },
       history,
     } = this.props;
-    const { destinationVersion } = this.state;
+    const { ifSeqNo, ifPrimaryTerm } = this.state;
     try {
       const resp = await httpClient.put(
-        `../api/alerting/destinations/${destinationId}?version=${destinationVersion}`,
+        `../api/alerting/destinations/${destinationId}?ifSeqNo=${ifSeqNo}&ifPrimaryTerm=${ifPrimaryTerm}`,
         requestData
       );
       const {
-        data: { ok, version },
+        data: { ok },
       } = resp;
       if (ok) {
         history.push(`/destinations`);
@@ -156,12 +165,13 @@ class CreateDestination extends React.Component {
       <div style={{ padding: '25px 50px' }}>
         <Formik
           initialValues={initialValues}
+          enableReinitialize={true}
           validateOnChange={false}
           onSubmit={this.handleSubmit}
           render={({ values, handleSubmit, isSubmitting }) => (
             <Fragment>
               <EuiTitle size="l">
-                <h1>{edit ? 'Edit' : 'Add'} Destination</h1>
+                <h1>{edit ? 'Edit' : 'Add'} destination</h1>
               </EuiTitle>
               <EuiSpacer size="m" />
               <ContentPanel title="Destination" titleSize="s" bodyStyles={{ padding: 'initial' }}>
@@ -198,9 +208,10 @@ class CreateDestination extends React.Component {
                       options: DESTINATION_OPTIONS,
                     }}
                   />
+                  <EuiSpacer size="m" />
                   <SubHeader title={<h4>Settings</h4>} description={''} />
                   <EuiSpacer size="m" />
-                  {destinationType[values.type]({ values, type: values.type })}
+                  {destinationType[values.type]({ httpClient, values, type: values.type })}
                 </div>
                 <EuiSpacer size="m" />
               </ContentPanel>
